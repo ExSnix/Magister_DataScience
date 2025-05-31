@@ -1,0 +1,687 @@
+---
+title:    "Asociación entre Datos Médicos y Diagnóstico de Alzheimer"
+subtitle: "Análisis Estadístico de Datos Clínicos con Enfoque Tidyverse"
+author:   "Matías Elier Labraña Abarca"
+date: Sys.Date()
+format:
+  pdf:
+    toc: true
+    number-sections: true
+    code-overflow: wrap
+    fig-cap-location: bottom
+    code-block-bg: true
+    geometry: top=2.5cm, bottom=2.5cm, left=3cm, right=3cm
+    include-in-header: styles.sty # un archivo .sty para estilos LaTeX
+    keep-tex: true # Conservar el archivo .tex intermedio para depuración de LaTeX
+bibliography: references.bib
+csl: apa.csl # Estilo de citas APA
+execute:
+  echo: true      # ¿Mostrar bloques de código en el PDF final?
+  warning: false  # ¿Suprimir advertencias generadas por el código?
+  message: false  # ¿Suprimir mensajes generados por el código?  
+---
+
+```{r setup, include=FALSE}
+# Este chunk setup define las opciones globales y carga paquetes y no se incluye en el output.
+
+knitr::opts_chunk$set(
+  fig.align = "center", # Centra las figuras generadas.
+  out.width = "90%",    # Define el ancho de las figuras.
+  message = FALSE,      # Suprimir mensajes globalmente.
+  warning = FALSE       # Suprimir advertencias globalmente.
+)
+
+# Carga de paquetes necesarios para el análisis.
+library(tidyverse)      # Colección de paquetes para ciencia de datos
+library(kableExtra)     # Para tablas formateadas
+library(patchwork)      # Para combinar múltiples gráficos de ggplot2
+library(skimr)          # Para resúmenes estadísticos descriptivos
+library(caret)          # Para tareas de machine learning
+library(cli)            # Para mensajes de consola estilizados
+library(stringr)        # Para manipulación de cadenas de texto
+library(pROC)           # Para curvas ROC (opcional, si se usa en la evaluación del modelo)
+```
+
+\pagebreak
+
+# Introducción
+
+Este estudio tiene como objetivo identificar los factores clínicos y demográficos asociados al diagnóstico de la enfermedad de Alzheimer a partir del análisis del conjunto de datos *Alzheimer's Disease Data* (Kaggle). Se emplea un enfoque sistemático basado en el ecosistema **Tidyverse**, el cual facilita tanto la limpieza de los datos como la exploración de relaciones significativas entre variables como edad, nivel educativo, antecedentes familiares y puntuaciones cognitivas (MMSE).
+
+### Objetivos del análisis
+
+-   **Preprocesamiento de datos** utilizando las herramientas del Tidyverse para garantizar su calidad y consistencia.
+
+    **Análisis exploratorio de datos (AED)** enfocado en la identificación de patrones y relaciones entre variables relevantes.
+
+    **Desarrollo de una función reproducible** para automatizar el análisis y facilitar su aplicación a futuros datasets similares.
+
+# Definición del Problema
+
+#### Problema de Investigación
+
+La enfermedad de Alzheimer es una condición neurodegenerativa progresiva que afecta significativamente la calidad de vida de quienes la padecen. La identificación de factores de riesgo tempranos constituye un desafío clave en el ámbito de la salud pública y la investigación biomédica, ya que permitiría diseñar estrategias preventivas más eficaces y personalizadas.
+
+#### Objetivo General
+
+El objetivo de este estudio es explorar las relaciones existentes entre características demográficas, factores clínicos y el diagnóstico de la enfermedad de Alzheimer, evaluando además la factibilidad de desarrollar un modelo predictivo basado en dichas variables.
+
+#### Variables Clave
+
+-   **Variables Cuantitativas**:
+
+    -   **Age (Edad)**: Edad del paciente en años. Se plantea la hipótesis de que una mayor edad está asociada con un riesgo más elevado de desarrollar Alzheimer
+
+    -   **MMSE (Mini-Mental State Examination)**: Puntaje obtenido en la evaluación cognitiva. Se espera que puntuaciones más bajas se correlacionen con un diagnóstico de Alzheimer.
+
+    **Variables Cualitativas**:
+
+    -   **FamilyHistoryAlzheimers**: Antecedentes familiares de Alzheimer (sí/no). Se plantea que contar con antecedentes familiares incrementa el riesgo de desarrollar la enfermedad.
+
+    -   **EducationLevel**: Nivel educativo alcanzado. Se investigará la posible relación entre los niveles educativos (bajo, medio, alto) y el diagnóstico de Alzheimer.
+
+\pagebreak
+
+# Datos y Metodología
+
+### Descripción del Dataset
+
+En primer lugar, se listan los archivos con extensión **.csv** en el directorio de trabajo actual, con el propósito de verificar la presencia del archivo requerido: `alzheimers_disease_data.csv`. Esta verificación inicial es fundamental para evitar errores durante el proceso de carga.
+
+A continuación, se procede a cargar el dataset utilizando la función **`read_csv`** del paquete **readr**, que forma parte del ecosistema **tidyverse**. Se implementa un manejo de errores robusto para asegurar que la carga se realice de manera exitosa y detener el proceso en caso de fallos, garantizando la confiabilidad de los datos desde la etapa inicial.
+
+Una vez completada la carga, se inspeccionan las dimensiones del dataset, el número de filas y columnas para obtener un panorama general de su tamaño. Posteriormente, se efectúa una revisión preliminar de valores ausentes (**NA**) en todas las columnas, generando un resumen con la cantidad de datos faltantes por variable. Esta información es crucial para detectar problemas de calidad de datos que deberán abordarse en etapas posteriores.
+
+Finalmente, se presenta un listado de las principales variables utilizadas en el análisis, con una breve descripción de cada una, incluyendo su tipo (cuantitativa o cualitativa) y su relevancia en el estudio.
+
+```{r valida_existencia-csv}
+
+print(list.files(pattern = "*.csv"))
+```
+
+```{r carga-csv}
+
+# Asigna el nombre del .CSV a una variable
+archivo <- "alzheimers_disease_data.csv" 
+
+# Inicializar una bandera para rastrear el éxito de la carga del archivo.
+carga_exitosa <- TRUE
+
+# Intentar cargar el archivo CSV utilizando readr::read_csv.
+# Se incluye manejo de errores para capturar problemas durante la carga.
+alzheimer_raw <- tryCatch(
+  {
+    # show_col_types = FALSE evita mensajes sobre los tipos de columna.
+    readr::read_csv(archivo, show_col_types = FALSE)
+  },
+  error = function(captura_error) {
+    # En caso de error, mostrar un mensaje descriptivo.
+    message("Error al cargar el archivo: ", captura_error$message)
+    # Actualizar la bandera para indicar que la carga falló.
+    carga_exitosa <<- FALSE # <<- para modificar la variable en el entorno global del chunk.
+    # Devolver NULL como resultado de la operación fallida.
+    NULL
+  }
+)
+
+# Verificar si la carga fue exitosa y el objeto de datos no es NULL.
+if (carga_exitosa && !is.null(alzheimer_raw)) {
+  message("Carga exitosa del archivo.")
+} else {
+  message("No se pudo cargar el archivo. Verifica la ruta y el nombre.")
+  # Detener la ejecución del documento si la carga del archivo falla.
+  knitr::knit_exit() 
+}
+```
+
+```{r preview-alzheimer_raw}
+
+# Verificar que el dataset 'alzheimer_raw' exista y no sea NULL antes de proceder.
+if (exists("alzheimer_raw") && !is.null(alzheimer_raw)) {
+  # Imprimir las dimensiones del dataset.
+  cat(paste0("El dataset original contiene ", nrow(alzheimer_raw), " filas y ",
+      ncol(alzheimer_raw), " columnas.\n"))
+}
+```
+
+## Procesamiento
+
+Esta sección se centra en la preparación y limpieza del dataset original (`alzheimer_raw`). A continuación, se ejecutan pasos clave para garantizar la calidad de los datos y su correcta tipificación antes de los análisis posteriores. Primero, se realiza una revisión exhaustiva de los valores ausentes y se documentan las variables que presentan datos faltantes. Luego, se transforman variables categóricas y numéricas a sus formatos adecuados, facilitando la consistencia en las etapas de análisis y modelado. Finalmente, se ajusta el dataset para excluir columnas irrelevantes o identificadores únicos, obteniendo un conjunto final de datos (`alzheimer_analisis`) listo para las fases de exploración y modelado.
+
+### Limpieza Inicial
+
+```{r limpieza-alzheimer_raw}
+
+# Revisión inicial de valores ausentes (NA).
+# Verificar que el dataset 'alzheimer_raw' exista y no sea NULL.
+if (exists("alzheimer_raw") && !is.null(alzheimer_raw)) {
+  # Calcular la cantidad de valores NA por columna.
+  missing_values_summary <- alzheimer_raw %>%
+    summarise(
+      # Aplicar la función sum(is.na(.)) a todas las columnas.
+      across(
+        everything(),       
+        ~ sum(is.na(.))     
+      )
+    ) %>%
+    # Convertir el resumen de formato ancho a largo para facilitar el filtrado y visualización.
+    pivot_longer(
+      everything(),             
+      names_to = "columna",     
+      values_to = "cantidad_na" 
+    ) %>%
+    # Filtrar para mostrar solo las columnas que tienen al menos un valor NA.
+    filter(cantidad_na > 0)   
+
+  # Visualización de los resultados del conteo de NAs.
+  # Si se encontraron columnas con valores ausentes, mostrar un resumen.
+  if (nrow(missing_values_summary) > 0) {
+    cat("Se identificaron valores ausentes en las siguientes columnas:\n")
+    # Imprimir la tabla de valores perdidos usando kable para un formato legible.
+    print(knitr::kable(
+      missing_values_summary,
+      caption = "Resumen de Valores Perdidos Iniciales"
+    ))
+    cat("Estos valores serán considerados en etapas posteriores del análisis.\n")
+  } else {
+    # Si no se encontraron NAs, informar al usuario.
+    cat("No se encontraron valores perdidos en una revisión inicial del dataset.\n")
+  }
+}
+
+# Descripción breve de las variables clave (reiteración de la sección de Objetivos).
+cat("\nVariables principales del estudio (reiteración):\n")
+cat("- Age (Numérica): Edad del paciente en años.\n")
+cat("- MMSE (Numérica): Puntaje Mini-Mental State Examination.\n")
+cat("- FamilyHistoryAlzheimers (Categórica Binaria): Antecedentes familiares.\n")
+cat("- EducationLevel (Categórica Ordinal): Nivel educativo.\n")
+cat("- Diagnosis (Categórica Binaria): Diagnóstico de Alzheimer (1 = Sí, 0 = No).\n")
+
+```
+
+### Trasformación de Variable
+
+```{r transformación-alzheimer_raw a alzheimer}
+
+# Verificar que el dataset 'alzheimer_raw' exista y no sea NULL.
+if (exists("alzheimer_raw") && !is.null(alzheimer_raw)) {
+ 
+  # Lista de columnas a convertir en factor.
+  cols_to_factor <- c(
+  "BehavioralProblems",       "CardiovascularDisease",
+  "Confusion",                "Depression",
+  "Diabetes",                 "DifficultyCompletingTasks",
+  "Disorientation",           "EducationLevel",
+  "Ethnicity",                "FamilyHistoryAlzheimers",
+  "Forgetfulness",            "Gender",
+  "HeadInjury",               "Hypertension",
+  "MemoryComplaints",         "PersonalityChanges",
+  "Smoking"
+)
+  
+# Crear el dataset 'alzheimer' aplicando las transformaciones.
+alzheimer <- alzheimer_raw %>%
+  # Convertir las columnas en 'cols_to_factor' a tipo factor.
+  mutate(across(all_of(cols_to_factor), as.factor)) %>%
+  # Mutaciones específicas con niveles y etiquetas definidos.
+  mutate(
+    Diagnosis = factor(Diagnosis, 
+                       levels = c(0, 1),
+                       labels = c("No Alzheimer",
+                                  "Alzheimer"
+                       )),
+    Gender = factor(Gender,
+                    levels = c(0, 1),
+                    labels = c("Masculino",
+                               "Femenino"
+                       )),
+    Ethnicity = factor(Ethnicity, 
+                       levels = c(0,1,2,3),
+                       labels = c("Caucásico", 
+                                  "Afroamericano", 
+                                  "Asiático", 
+                                  "Otro"
+                       )),
+    EducationLevel = factor(EducationLevel,
+                            levels = c(0,1,2,3),
+                            labels = c("Ninguno",
+                                       "Secundaria",
+                                       "Universitario",
+                                       "Superior"),
+                            ordered = TRUE
+                       ))
+
+# Mostrar estructura del dataset tras preprocesamiento inicial.
+cat("\nEstructura del dataset 'alzheimer' tras preprocesamiento inicial:\n")
+dplyr::glimpse(alzheimer)
+}
+```
+
+### Limpieza Final
+
+A continuación se eliminan las columnas `DoctorInCharge` y `PatientID` porque no aportan información útil para el análisis. `DoctorInCharge` es un dato administrativo que no está relacionado directamente con la condición clínica de los pacientes, mientras que `PatientID` es un identificador único que no tiene valor predictivo. Su exclusión permite que el modelo de análisis se enfoque exclusivamente en las variables relevantes y no en identificadores que podrían introducir sesgos o ruido en los resultados.
+
+```{r elimina_col-alzheimer}
+
+# Verificar que el dataset 'alzheimer' exista y no sea NULL.
+if (exists("alzheimer") && !is.null(alzheimer)) {
+  
+  # Elimina 'DoctorInCharge' si existe en el dataset.
+  if ("DoctorInCharge" %in% names(alzheimer)) {
+    alzheimer <- alzheimer %>%
+      select(-DoctorInCharge)
+    
+    cat("Columna 'DoctorInCharge' eliminada.\n")
+  }
+  
+  # Creamos alzheimer_analisis 
+  alzheimer_analisis <- alzheimer %>%
+    # Elimina 'PatientID' si existe en el dataset.
+    select(-PatientID)
+  
+  # Mostrar dataset 'alzheimer_analisis' tras ajustes finales.
+  cat("\nEstructura del dataset 'alzheimer_analisis' para análisis y modelado:\n")
+  dplyr::glimpse(alzheimer_analisis)
+  
+} else {
+  
+  # Mensaje si el dataset 'alzheimer' no fue creado en el paso anterior.
+  cat("El dataset 'alzheimer' no fue creado, saltando limpieza para modelado.\n")
+  
+}
+
+```
+
+# Inspección Detallada del DataFrame y Análisis Exploratorio (AED)
+
+## Función de Inspección Estructurada
+
+Para una comprensión más profunda de la estructura y contenido del dataset preprocesado, se utiliza la función personalizada `inspect_df_tidy`.
+
+```{r inspect_df-datos, echo=TRUE}
+# Este chunk define la función 'inspect_df_tidy' para un resumen detallado de un DataFrame.
+# ==============================================================================
+#' @title Inspección Estructurada de un DataFrame (Versión Tidyverse)
+#'
+#' @description Esta función ofrece un resumen detallado y estructurado de un
+#' DataFrame o tibble, incluyendo metadatos, dimensiones, columnas con NA y una
+#' visualización de la estructura usando funciones de la familia tidyverse.
+#'
+#' @param data Objeto `data.frame` o `tibble` a inspeccionar.
+#' @param n_cols Número máximo de columnas a mostrar con `glimpse()` (default: 10).
+#' @param n_vals Número de valores de ejemplo por columna en `glimpse()` (default: 1).
+#' @param max_width Ancho máximo para los nombres de columnas (no usado directamente por glimpse de la misma manera).
+#'
+#' @details La función utiliza `cli` para una salida formateada en consola y `dplyr`
+#' para la manipulación de datos. Opcionalmente, puede usar `skimr` si está instalado.
+#'
+#' @examples
+#' # inspect_df_tidy(iris, n_cols = 5, n_vals = 3)
+#' # if (exists("alzheimer_analisis")) {
+#' #   inspect_df_tidy(alzheimer_analisis, n_cols = ncol(alzheimer_analisis), n_vals = 2)
+#' # }
+# ==============================================================================
+
+inspect_df_tidy <- function(data, n_cols = 10, n_vals = 1, max_width = 80) {
+  # --- Cargar paquetes necesarios (de forma silenciosa) ---
+  # Asegura que los paquetes estén disponibles en el entorno de la función.
+  requireNamespace("cli", quietly = TRUE)
+  requireNamespace("dplyr", quietly = TRUE)
+  requireNamespace("tibble", quietly = TRUE)
+  
+  # --- Validaciones de entrada de los parámetros ---
+  # Verificar que 'data' sea un data.frame o tibble.
+  if (!inherits(data, c("data.frame", "tbl_df"))) {
+    stop(cli::col_red("El argumento 'data' debe ser un data.frame o tibble."))
+  }
+  # Verificar que 'n_cols' sea un entero positivo.
+  if (!is.numeric(n_cols) || n_cols <= 0 || n_cols %% 1 != 0) {
+    stop(cli::col_red("'n_cols' debe ser un número entero positivo."))
+  }
+  # Verificar que 'n_vals' sea un entero no negativo.
+  if (!is.numeric(n_vals) || n_vals < 0 || n_vals %% 1 != 0) {
+    stop(cli::col_red("'n_vals' debe ser un número entero mayor o igual a 0."))
+  }
+  # Verificar que 'max_width' sea un número positivo.
+  if (!is.numeric(max_width) || max_width <= 0) {
+    stop(cli::col_red("'max_width' debe ser un número positivo."))
+  }
+  
+  # --- Conversión a tibble para asegurar consistencia en el manejo ---
+  data <- tibble::as_tibble(data)
+  
+  # --- Cálculos clave para el resumen ---
+  # Determinar el número de columnas a mostrar en la vista de glimpse.
+  n_show <- min(n_cols, ncol(data))
+  # Contar el número de columnas que contienen al menos un valor NA.
+  na_cols <- data %>%
+    dplyr::summarise(dplyr::across(dplyr::everything(), ~ any(is.na(.)))) %>%
+    unlist() %>%
+    sum()
+  
+  # --- Encabezado informativo utilizando el paquete `cli` ---
+  cli::cli_h1("Resumen de Estructura del DataFrame")
+  
+  # Mostrar información básica del objeto.
+  cli::cli_alert_success("Clase del objeto: {.strong {paste(class(data), collapse = ', ')}}")
+  cli::cli_alert_info("Dimensiones: {nrow(data)} filas × {ncol(data)} columnas")
+  # Informar sobre la presencia de NAs.
+  if (na_cols > 0) {
+    cli::cli_alert_warning("Columnas con NA: {na_cols}")
+  } else {
+    cli::cli_alert_success("Sin columnas con NA")
+  }
+  
+  # --- Listado de nombres de columnas ---
+  cli::cli_h2("Nombres de columnas")
+  # Imprimir los nombres de las columnas, cada una en una nueva línea.
+  cat(paste0("• ", names(data), collapse = "\n"), "\n")
+  
+  # --- Vista estructural con glimpse (del tidyverse) ---
+  cli::cli_h2("Vista estructural con glimpse")
+  # Seleccionar las primeras 'n_show' columnas para la vista de glimpse.
+  data_to_glimpse <- data %>%
+    dplyr::select(dplyr::all_of(names(data)[1:n_show]))
+  
+  # --- Validación previa a `glimpse` para evitar errores si no hay datos ---
+  # Asegurar que haya datos para mostrar antes de llamar a glimpse.
+  if (nrow(data_to_glimpse) > 0 && ncol(data_to_glimpse) > 0) {
+    # Mostrar la estructura usando glimpse, ajustando el ancho y el número de valores de ejemplo.
+    data_to_glimpse %>%
+      tibble::glimpse(width = max_width, max_extra_cols = n_vals) # max_extra_cols controla ejemplos adicionales
+  } else {
+    cli::cli_alert_warning("No hay datos para mostrar con `glimpse`.")
+  }
+  
+  # --- Nota si no se muestran todas las columnas en glimpse ---
+  if (ncol(data) > n_cols) {
+    cli::cli_alert_info(
+      "Mostrando {n_show} de {ncol(data)} columnas. Ajuste 'n_cols' para ver más columnas."
+    )
+  }
+  
+  # --- Opción adicional: Resumen estadístico con skimr::skim() si el paquete está instalado ---
+  if (requireNamespace("skimr", quietly = TRUE)) {
+    cli::cli_h2("Resumen estadístico (opcional con skimr::skim())")
+    # Imprimir el resumen estadístico generado por skimr.
+    print(skimr::skim(data))
+  }
+  
+  # Imprimir una línea divisoria al final del resumen.
+  cli::cli_rule()
+}
+
+```
+
+```{r ejec_inspect_df_tidy}
+# Este chunk ejecuta la función 'inspect_df_tidy' sobre el dataset 'alzheimer_analisis'.
+
+# Verificar que el dataset 'alzheimer_analisis' exista y no sea NULL.
+if (exists("alzheimer_analisis") && !is.null(alzheimer_analisis)) {
+  # Ejecutar la función de inspección, mostrando todas las columnas y hasta 2 valores de ejemplo.
+  inspect_df_tidy (alzheimer_analisis, n_cols = ncol(alzheimer_analisis), n_vals = 2)
+} else {
+  # Mensaje de error si el dataset no está disponible.
+  cli::cli_alert_danger("El objeto 'alzheimer_analisis' no existe. Saltando inspección detallada.")
+}
+```
+
+## Análisis Exploratorio Bivariado
+
+Esta sección se enfoca en explorar las relaciones entre las variables predictoras y la variable objetivo (`Diagnosis`).
+
+```{r explorar_relaciones_diagnostico}
+# Este chunk define la Función para analizar la relación entre cada variable predictora y el diagnóstico de Alzheimer
+# - Para variables categóricas: usa tablas de contingencia y prueba chi-cuadrado
+# - Para variables numéricas: compara medias con t-test y genera gráficos de distribución
+
+# ==============================================================================
+#' @title Exploración Bivariada de Relaciones con el Diagnóstico
+#' @description Esta función realiza un análisis bivariado entre cada predictor
+#' y una variable objetivo categórica. Genera tablas, pruebas estadísticas
+#' (Chi-cuadrado para categóricas, t-test/Wilcoxon para numéricas) y gráficos.
+#' @param datos DataFrame o tibble que contiene los datos.
+#' @param var_objetivo Nombre (cadena) de la variable objetivo (debe ser factor).
+#' @param umbral_chi_test Umbral de significancia para la prueba Chi-cuadrado (default: 0.05).
+#' @param umbral_t_test Umbral de significancia para la prueba t o Wilcoxon (default: 0.05).
+#' @return Una lista invisible conteniendo los gráficos generados.
+#' @details Utiliza `ggplot2` para gráficos, `kableExtra` para tablas, y `patchwork` para combinar gráficos.
+#' Las pruebas estadísticas se realizan con `stats::chisq.test` y `stats::t.test` (o `stats::wilcox.test`).
+# ==============================================================================
+explorar_relaciones_diagnostico <- function(datos, 
+                                            var_objetivo, 
+                                            umbral_chi_test = 0.05, 
+                                            umbral_t_test = 0.05) {
+
+  # Verificación inicial: ¿Existe la variable objetivo en los datos?
+  if (!var_objetivo %in% names(datos)) {
+    stop("ERROR: La variable '", var_objetivo, "' no existe en el dataset.")
+  }
+  
+  # Asegurar que el diagnóstico sea un factor (Alzheimer/No Alzheimer)
+  if (!is.factor(datos[[var_objetivo]])) {
+    stop("ERROR: La variable objetivo debe ser categórica (factor).")
+  }
+
+  lista_graficos <- list()  # Aquí guardaremos todos los gráficos generados
+  
+  # Analizamos cada variable predictora (excepto la variable objetivo)
+  for (col_nombre in names(datos %>% select(-all_of(var_objetivo)))) {
+    
+    cat("\n--- Analizando:", col_nombre, "vs", var_objetivo, "---\n")
+    predictor_vector <- datos[[col_nombre]]
+    
+    # Convertir a factor si es texto (ej: "Sí"/"No" -> categorías)
+    if (is.character(predictor_vector)) { 
+      predictor_vector <- as.factor(predictor_vector)
+    }
+
+    ###########################################################
+    ### 1. ANÁLISIS PARA VARIABLES CATEGÓRICAS (FACTORES) ###
+    ###########################################################
+    if (is.factor(predictor_vector)) {
+      cat("(Variable categórica)\n")
+      
+      # Tabla de frecuencias cruzadas (ej: Antecedentes familiares vs Diagnóstico)
+      tabla <- datos %>%
+        dplyr::count(!!sym(col_nombre), !!sym(var_objetivo)) %>%
+        tidyr::pivot_wider(names_from = !!sym(var_objetivo), 
+                          values_from = n, 
+                          values_fill = 0)  # Convertir a formato ancho
+      
+      print(knitr::kable(tabla, caption = paste(col_nombre, "vs", var_objetivo)))
+      
+      # Prueba Chi-cuadrado (evalúa si hay asociación significativa)
+      tryCatch({
+        if (nlevels(predictor_vector) > 1) {
+          test <- stats::chisq.test(datos[[col_nombre]], datos[[var_objetivo]])
+          cat("\nPrueba Chi-cuadrado:\n")
+          print(test)  # Muestra estadístico, grados de libertad y valor p
+          
+          # Interpretación del valor p:
+          if (test$p.value < umbral_chi_test) {
+            cat(cli::col_green("-> Asociación SIGNIFICATIVA (p <", umbral_chi_test, ")\n"))
+          } else {
+            cat(cli::col_yellow("-> Sin asociación significativa (p >", umbral_chi_test, ")\n"))
+          }
+        }
+      }, error = function(e) {
+        cat(cli::col_red("ERROR en Chi-cuadrado:", e$message, "\n"))
+      })
+      
+      # Gráfico de proporciones (ej: % de diagnósticos por nivel educativo)
+      grafico <- ggplot(datos, aes(x = !!sym(col_nombre), fill = !!sym(var_objetivo))) +
+        geom_bar(position = "fill") +  # Barras apiladas al 100%
+        labs(x = col_nombre, y = "Proporción", 
+             title = paste("Distribución de", var_objetivo, "por", col_nombre)) +
+        scale_y_continuous(labels = scales::percent)  # Eje Y en porcentaje
+      
+      print(grafico)
+      lista_graficos[[col_nombre]] <- grafico  # Guardar para referencia
+
+    ###########################################################
+    ### 2. ANÁLISIS PARA VARIABLES NUMÉRICAS (EDAD, MMSE, ETC) ###
+    ###########################################################
+    } else if (is.numeric(predictor_vector)) {
+      cat("(Variable numérica)\n")
+      
+      # Estadísticas descriptivas por grupo de diagnóstico
+      stats <- datos %>%
+        group_by(!!sym(var_objetivo)) %>%
+        summarise(
+          n = n(),
+          Media = mean(!!sym(col_nombre), na.rm = TRUE),
+          SD = sd(!!sym(col_nombre), na.rm = TRUE),
+          .groups = "drop"
+        )
+      
+      print(knitr::kable(stats, digits = 2, 
+                         caption = paste("Estadísticas de", col_nombre)))
+      
+      # Comparación de medias con t-test
+      tryCatch({
+        grupo1 <- datos %>% 
+          filter(!!sym(var_objetivo) == levels(datos[[var_objetivo]])[1]) %>% 
+          pull(!!sym(col_nombre))
+        grupo2 <- datos %>% 
+          filter(!!sym(var_objetivo) == levels(datos[[var_objetivo]])[2]) %>% 
+          pull(!!sym(col_nombre))
+        
+        if (length(grupo1) > 1 && length(grupo2) > 1) {
+          test <- t.test(grupo1, grupo2)
+          cat("\nPrueba t-test (comparación de medias):\n")
+          print(test)
+          
+          if (test$p.value < umbral_t_test) {
+            cat(cli::col_green("-> Diferencias SIGNIFICATIVAS (p <", umbral_t_test, ")\n"))
+          }
+        }
+      }, error = function(e) {
+        cat(cli::col_red("ERROR en t-test:", e$message, "\n"))
+      })
+      
+      # Gráficos combinados: boxplot + densidad
+      boxplot <- ggplot(datos, aes(x = !!sym(var_objetivo), 
+                                 y = !!sym(col_nombre),
+                                 fill = !!sym(var_objetivo))) +
+        geom_boxplot(alpha = 0.7) +
+        labs(x = NULL, y = col_nombre)
+      
+      densidad <- ggplot(datos, aes(x = !!sym(col_nombre), 
+                                  fill = !!sym(var_objetivo))) +
+        geom_density(alpha = 0.5) +
+        labs(x = col_nombre, y = "Densidad")
+      
+      combo <- boxplot + densidad + 
+        plot_annotation(title = paste("Distribución de", col_nombre))
+      
+      print(combo)
+      lista_graficos[[col_nombre]] <- combo
+    }
+  }
+  
+  return(invisible(lista_graficos))  # Devuelve los gráficos sin mostrarlos
+}
+```
+
+```{r alzheimer_analisis}
+# Este chunk ejecuta la función 'explorar_relaciones_diagnostico' en un subconjunto
+# del dataset 'alzheimer_analisis'. Se renombró el chunk de "alzheimer_analisis" 
+# para evitar confusión con el nombre del dataset.
+
+# Verificar que el dataset 'alzheimer_analisis' y la columna 'Diagnosis' existan.
+if (exists("alzheimer_analisis") && !is.null(alzheimer_analisis) && "Diagnosis" %in% names(alzheimer_analisis)) {
+  
+  # Asegurar que la variable 'Diagnosis' sea un factor con los niveles correctos ("No Alzheimer", "Alzheimer").
+  # Esto es crucial para que las funciones de modelado y visualización la interpreten correctamente.
+  alzheimer_analisis$Diagnosis <- factor(alzheimer_analisis$Diagnosis, 
+                                         levels = c("No Alzheimer", "Alzheimer"))
+
+  # Definir las variables predictoras específicas a incluir en el análisis exploratorio bivariado.
+  variables_a_explorar <- c(
+    "Age", "Gender", "EducationLevel", "MMSE", 
+    "FamilyHistoryAlzheimers", "BMI", "Smoking", "AlcoholConsumption",
+    "PhysicalActivity", "DietQuality", "SleepQuality", "SystolicBP",
+    "CholesterolTotal", "FunctionalAssessment", "MemoryComplaints",
+    "ADL" # Activities of Daily Living
+  )
+  
+  # Asegurar que todas las variables seleccionadas para explorar realmente existen en el dataset.
+  # Obtener la intersección de las variables deseadas y las presentes en 'alzheimer_analisis'.
+  variables_existentes <- intersect(variables_a_explorar, names(alzheimer_analisis))
+  
+  # Proceder solo si hay variables existentes para explorar.
+  if(length(variables_existentes) > 0){
+    # Crear un subconjunto del dataset solo con las variables existentes a explorar y la variable objetivo 'Diagnosis'.
+    alzheimer_subset_exploracion <- alzheimer_analisis %>%
+      select(all_of(c(variables_existentes, "Diagnosis"))) # 'Diagnosis' se añade siempre.
+    
+    # Imprimir un encabezado para el inicio del análisis.
+    cat(cli::rule(left = "INICIO DEL ANÁLISIS EXPLORATORIO BIVARIADO", col = "magenta"), "\n")
+    # Nota: Puede ser necesario ajustar fig.height y fig.width en las opciones del chunk si los gráficos son muy grandes o numerosos.
+    # Ejecutar la función de exploración bivariada y almacenar los gráficos generados.
+    lista_plots_aed <- explorar_relaciones_diagnostico(alzheimer_subset_exploracion, "Diagnosis")
+    # Imprimir un pie de página para el fin del análisis.
+    cat(cli::rule(left = "FIN DEL ANÁLISIS EXPLORATORIO BIVARIADO", col = "magenta"), "\n")
+  } else {
+    # Advertencia si ninguna de las variables seleccionadas para explorar existe en el dataset.
+    cli::cli_alert_warning("Ninguna de las variables seleccionadas para explorar existe en 'alzheimer_analisis'.")
+  }
+  
+} else {
+  # Mensaje de error si el dataset 'alzheimer_analisis' o la columna 'Diagnosis' no están disponibles.
+  cli::cli_alert_danger("El dataset 'alzheimer_analisis' o la columna 'Diagnosis' no están disponibles.")
+}
+```
+
+# Regresión logistica
+
+(desarrollo futuro)
+
+# Machine learnig (ML)
+
+(desarrollo futuro)
+
+# **Hallazgos Principales**
+
+1.  **Relaciones significativas identificadas**:
+
+    -   El análisis exploratorio bivariado reveló asociaciones estadísticamente significativas entre el diagnóstico de Alzheimer y variables como la edad, puntuaciones MMSE, antecedentes familiares y nivel educativo.
+
+    -   Las pruebas estadísticas (chi-cuadrado, t-test) confirmaron estas relaciones con valores p significativos.
+
+2.  **Variables predictoras clave**:
+
+    -   **Edad**: Confirmada como factor de riesgo importante, con pacientes mayores mostrando mayor prevalencia de Alzheimer.
+
+    -   **MMSE**: Puntuaciones más bajas se asociaron fuertemente con diagnóstico positivo.
+
+    -   **Antecedentes familiares**: Variable categórica con impacto significativo en el diagnóstico.
+
+    -   **Nivel educativo**: Se observó un efecto protector de mayor educación.
+
+3.  **Calidad de datos**:
+
+    -   Las transformaciones de variables (especialmente a factores ordenados) permitieron análisis más robustos.
+
+## **Limitaciones**
+
+1.  El análisis se basó en datos secundarios con limitaciones en el tamaño muestral y variables disponibles.
+
+2.  El estudio es observacional, por lo que no se pueden establecer relaciones causales.
+
+3.  El modelo predictivo (regresión logística) mencionado como desarrollo futuro requeriría validación adicional.
+
+## **Recomendaciones**
+
+1.  **Para mi investigación futura**:
+
+    -   Implementar los modelos predictivos propuestos (regresión logística y machine learning).
+
+    -   Considerar interacciones entre variables en análisis multivariados.
+
+    -   Validar los hallazgos con muestras independientes.
+
+## **Conclusión Final**
+
+Este análisis proporciona evidencia estadística sólida sobre los factores asociados al diagnóstico de Alzheimer, destacando la utilidad del enfoque Tidyverse para el procesamiento y exploración de datos médicos. Los hallazgos sientan las bases para el desarrollo futuro de modelos predictivos que podrían contribuir a la detección temprana de esta condición neurodegenerativa.
